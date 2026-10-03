@@ -1,1 +1,0 @@
-<?php require 'db.php'; respond(['success' => true, 'msg' => 'DB connected']);
