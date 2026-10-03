@@ -26,7 +26,7 @@
 <div class="container"><div class="row g-3">
  <div class="col-lg-7"><div class="card shadow-sm p-2">
   <div id="map"></div>
-  <div class="small mt-2 px-2">🟢 Low &nbsp;🟡 Medium &nbsp;🟠 High &nbsp;🔴 Critical &nbsp;| bigger dot = more merged reports</div>
+  <div class="small mt-2 px-2">🟢 Low &nbsp;🟡 Medium &nbsp;🟠 High &nbsp;🔴 Critical &nbsp;⚪ Resolved &nbsp;| bigger dot = more merged reports</div>
  </div></div>
 
  <div class="col-lg-5"><div class="card shadow-sm"><div class="card-body">
@@ -88,7 +88,9 @@ async function loadAll(){
   i.issues.forEach(x=>{
    const m=L.circleMarker([x.latitude,x.longitude],{radius:7+Math.min(x.report_count,7),color:'#222',weight:1,
     fillColor:x.status==='Resolved'?'#6c757d':(col[x.severity]||'#999'),fillOpacity:.85}).addTo(map);
-   m.bindPopup(`<b>#${x.id} ${esc(x.title)}</b><br>Status: ${esc(x.status)}<br>Severity: ${esc(x.severity)} (${x.priority_score})<br>Reports merged: ${x.report_count}`);
+   m.bindPopup(`<b>#${x.id} ${esc(x.title)}</b><br>Status: ${esc(x.status)}<br>Severity: ${esc(x.severity)} (${x.priority_score})<br>Reports merged: ${x.report_count} | 👍 ${x.upvotes}<br>
+    ${x.image_path?`<img src="${esc(x.image_path)}" style="width:180px;border-radius:8px;margin-top:6px"><br>`:''}
+    ${x.status!=='Resolved'?`<button class="btn btn-sm btn-outline-primary mt-2" onclick="upvote(${x.id})">👍 I face this too</button>`:''}`);
    markers.push(m)});
   $('kpis').innerHTML=[['Total issues',s.total],['Resolved',s.resolved],['Reports merged',s.duplicates_merged],['Avg fix time',s.avg_resolution_hours+' h']]
    .map(k=>`<div class="col-6 col-md-3"><div class="kpi"><b>${k[1]}</b>${k[0]}</div></div>`).join('');
@@ -119,11 +121,22 @@ async function renderTrack(id){
   const i=d.issue;
   $('trackOut').innerHTML=`<h6>#${i.id} ${esc(i.title)}</h6>
    <span class="badge bg-primary">${esc(i.status)}</span> <span class="badge bg-secondary">${esc(i.severity)}</span>
-   <span class="badge bg-dark">${i.report_count} reports</span>
+   <span class="badge bg-dark">${i.report_count} reports</span> <span class="badge bg-info text-dark">👍 ${i.upvotes}</span>
    ${i.assigned_to?`<div class="small mt-1">Assigned to: <b>${esc(i.assigned_to)}</b></div>`:''}
    <div class="small text-success mb-2">● Live, refreshes every 5s</div>
+   ${i.image_path||i.after_image_path?`<div class="row g-2 my-2">${i.image_path?`<div class="col-6"><small>Before</small><img src="${esc(i.image_path)}" class="img-fluid rounded"></div>`:''}${i.after_image_path?`<div class="col-6"><small class="text-success">After (fixed)</small><img src="${esc(i.after_image_path)}" class="img-fluid rounded"></div>`:''}</div>`:''}
    <div class="tl">${d.timeline.map(t=>`<div><b>${esc(t.new_status)}</b> <small class="text-muted">${esc(t.changed_at)}</small><br><small>${esc(t.remark)} (${esc(t.changed_by)})</small></div>`).join('')}</div>`;
  }catch(e){$('trackOut').innerHTML=`<div class="alert alert-danger py-2">${esc(e.message)}</div>`;clearInterval(timer)}
 }
+
+async function upvote(id){
+ try{
+  const fd=new FormData();fd.append('id',id);
+  const d=await fetch('api/upvote.php',{method:'POST',body:fd}).then(r=>r.json());
+  if(!d.success)throw new Error(d.error);
+  map.closePopup();loadAll();
+ }catch(e){alert(e.message)}
+}
+
 loadAll();setInterval(loadAll,15000);
 </script></body></html>

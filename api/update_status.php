@@ -1,6 +1,7 @@
 <?php
 session_start();
 require 'db.php';
+require 'helpers.php';
 if (empty($_SESSION['uid'])) respond(['success'=>false,'error'=>'Login required'], 401);
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') respond(['success'=>false,'error'=>'POST only'], 405);
 
@@ -17,15 +18,19 @@ try {
     $row = $st->fetch();
     if (!$row) respond(['success'=>false,'error'=>'Issue not found'], 404);
 
+    $after = null;
+    if ($new === 'Resolved') $after = saveImage($_FILES['after_image'] ?? null);
+
     $pdo->beginTransaction();
     $pdo->prepare("UPDATE issues SET status=?, assigned_to=COALESCE(NULLIF(?,''),assigned_to),
+                   after_image_path=COALESCE(?,after_image_path),
                    resolved_at=IF(?='Resolved', NOW(), NULL) WHERE id=?")
-        ->execute([$new, $assign, $new, $id]);
+        ->execute([$new, $assign, $after, $new, $id]);
     $pdo->prepare("INSERT INTO status_log (issue_id,old_status,new_status,remark,changed_by) VALUES (?,?,?,?,?)")
         ->execute([$id, $row['status'], $new, $remark ?: "Status changed to $new", $_SESSION['name']]);
     $pdo->commit();
     respond(['success'=>true]);
 } catch (Exception $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
-    respond(['success'=>false,'error'=>'Update failed'], 500);
+    respond(['success'=>false,'error'=>$e->getMessage()], 500);
 }

@@ -29,14 +29,22 @@
   <div class="col-md-4"><div class="card p-3"><canvas id="c3" height="200"></canvas></div></div>
  </div>
  <div class="card"><div class="card-body">
-  <div class="d-flex justify-content-between mb-2">
+  <div class="d-flex justify-content-between flex-wrap gap-2 mb-2">
    <h5 class="m-0">Priority queue (highest first)</h5>
-   <select id="flt" class="form-select form-select-sm w-auto" onchange="render()">
-    <option value="open">Open only</option><option value="all">All</option><option value="Resolved">Resolved</option>
-   </select>
+   <div class="d-flex gap-2">
+    <select id="flt" class="form-select form-select-sm w-auto" onchange="render()">
+     <option value="open">Open only</option><option value="all">All</option><option value="Resolved">Resolved</option>
+    </select>
+    <select id="fcat" class="form-select form-select-sm w-auto" onchange="render()">
+     <option value="">All categories</option><option>Road/Pothole</option><option>Streetlight</option><option>Garbage</option><option>Water/Drainage</option><option>Other</option>
+    </select>
+    <select id="fsev" class="form-select form-select-sm w-auto" onchange="render()">
+     <option value="">All severity</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option>
+    </select>
+   </div>
   </div>
   <div class="table-responsive"><table class="table table-sm align-middle">
-   <thead><tr><th>ID</th><th>Issue</th><th>Severity</th><th>Score</th><th>Reports</th><th>Age</th><th>Status</th><th>Assign to</th><th></th></tr></thead>
+   <thead><tr><th>ID</th><th>Issue</th><th>Severity</th><th>Score</th><th>Reports</th><th>Age</th><th>Status</th><th>Assign to</th><th>After photo</th><th></th></tr></thead>
    <tbody id="rows"></tbody></table></div>
  </div></div>
 </div>
@@ -63,6 +71,9 @@ async function login(){
 async function logout(){await fetch('../api/logout.php');location.reload()}
 
 async function refresh(){
+ // don't wipe the table while the admin is typing or choosing a file
+ const a=document.activeElement;
+ if(a&&a.closest&&a.closest('#rows'))return;
  try{
   const [i,s]=await Promise.all([fetch('../api/issues.php').then(r=>r.json()),fetch('../api/stats.php').then(r=>r.json())]);
   issues=i.issues;
@@ -77,7 +88,8 @@ async function refresh(){
 }
 function render(){
  const f=$('flt').value;
- const list=issues.filter(i=>f==='all'||(f==='open'?i.status!=='Resolved':i.status===f));
+ const list=issues.filter(i=>(f==='all'||(f==='open'?i.status!=='Resolved':i.status===f))
+  &&(!$('fcat').value||i.category===$('fcat').value)&&(!$('fsev').value||i.severity===$('fsev').value));
  $('rows').innerHTML=list.map(i=>{
   const age=Math.floor((Date.now()-new Date(i.created_at.replace(' ','T')))/86400000);
   const od=i.status!=='Resolved'&&age>7?' <span class="badge bg-danger">OVERDUE</span>':'';
@@ -85,16 +97,18 @@ function render(){
    <td><span class="badge bg-${sevCls[i.severity]}">${esc(i.severity)}</span></td><td>${i.priority_score}</td><td>${i.report_count}</td><td>${age}d</td>
    <td><select id="s${i.id}" class="form-select form-select-sm">${ST.map(x=>`<option ${x===i.status?'selected':''}>${x}</option>`).join('')}</select></td>
    <td><input id="a${i.id}" class="form-control form-control-sm" value="${esc(i.assigned_to||'')}" placeholder="Worker/dept"></td>
+   <td><input id="f${i.id}" type="file" accept="image/*" class="form-control form-control-sm" style="width:150px"></td>
    <td><button class="btn btn-sm btn-primary" onclick="save(${i.id},this)">Save</button></td></tr>`}).join('')
-  ||'<tr><td colspan="9" class="text-center text-muted">No issues</td></tr>';
+  ||'<tr><td colspan="10" class="text-center text-muted">No issues</td></tr>';
 }
 async function save(id,btn){
  const fd=new FormData();fd.append('id',id);fd.append('status',$('s'+id).value);fd.append('assigned_to',$('a'+id).value);
+ const file=$('f'+id).files[0];if(file)fd.append('after_image',file);
  btn.disabled=true;
  try{
   const d=await fetch('../api/update_status.php',{method:'POST',body:fd}).then(r=>r.json());
   if(!d.success)throw new Error(d.error);
-  btn.textContent='Saved ✓';setTimeout(()=>{btn.textContent='Save';btn.disabled=false;refresh()},800);
+  btn.textContent='Saved ✓';setTimeout(()=>{btn.textContent='Save';btn.disabled=false;document.activeElement.blur();refresh()},800);
  }catch(e){alert(e.message);btn.disabled=false}
 }
 init();
