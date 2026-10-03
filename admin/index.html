@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CivicTrack Authority</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>body{background:#f4f7fb}.kpi b{font-size:1.8rem;display:block}</style></head>
+<body>
+<nav class="navbar navbar-dark bg-dark mb-3"><div class="container-fluid">
+ <span class="navbar-brand">🏛️ CivicTrack Authority</span>
+ <div><a href="../index.html" class="btn btn-outline-light btn-sm">Public site</a>
+ <button id="logoutBtn" class="btn btn-danger btn-sm d-none" onclick="logout()">Logout</button></div>
+</div></nav>
+
+<div class="container" id="loginView" style="max-width:380px">
+ <div class="card shadow-sm"><div class="card-body">
+  <h5>Authority login</h5><div id="loginErr"></div>
+  <input id="em" class="form-control mb-2" placeholder="Email" value="admin@civic.com">
+  <input id="pw" type="password" class="form-control mb-3" placeholder="Password">
+  <button class="btn btn-primary w-100" onclick="login()">Login</button>
+ </div></div>
+</div>
+
+<div class="container-fluid d-none" id="dash">
+ <div class="row g-3 text-center mb-3" id="kpis"></div>
+ <div class="row g-3 mb-3">
+  <div class="col-md-4"><div class="card p-3"><canvas id="c1" height="200"></canvas></div></div>
+  <div class="col-md-4"><div class="card p-3"><canvas id="c2" height="200"></canvas></div></div>
+  <div class="col-md-4"><div class="card p-3"><canvas id="c3" height="200"></canvas></div></div>
+ </div>
+ <div class="card"><div class="card-body">
+  <div class="d-flex justify-content-between mb-2">
+   <h5 class="m-0">Priority queue (highest first)</h5>
+   <select id="flt" class="form-select form-select-sm w-auto" onchange="render()">
+    <option value="open">Open only</option><option value="all">All</option><option value="Resolved">Resolved</option>
+   </select>
+  </div>
+  <div class="table-responsive"><table class="table table-sm align-middle">
+   <thead><tr><th>ID</th><th>Issue</th><th>Severity</th><th>Score</th><th>Reports</th><th>Age</th><th>Status</th><th>Assign to</th><th></th></tr></thead>
+   <tbody id="rows"></tbody></table></div>
+ </div></div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>{const d=document.createElement('div');d.textContent=s??'';return d.innerHTML};
+const ST=['Reported','Verified','Assigned','In Progress','Resolved'];
+const sevCls={Low:'success',Medium:'warning',High:'danger',Critical:'dark'};
+let issues=[],charts=[];
+
+async function init(){
+ const m=await fetch('../api/me.php').then(r=>r.json());
+ if(m.logged_in){$('loginView').classList.add('d-none');$('dash').classList.remove('d-none');$('logoutBtn').classList.remove('d-none');refresh();setInterval(refresh,15000)}
+}
+async function login(){
+ const fd=new FormData();fd.append('email',$('em').value);fd.append('password',$('pw').value);
+ try{
+  const d=await fetch('../api/login.php',{method:'POST',body:fd}).then(r=>r.json());
+  if(!d.success)throw new Error(d.error);
+  location.reload();
+ }catch(e){$('loginErr').innerHTML=`<div class="alert alert-danger py-2">${esc(e.message)}</div>`}
+}
+async function logout(){await fetch('../api/logout.php');location.reload()}
+
+async function refresh(){
+ try{
+  const [i,s]=await Promise.all([fetch('../api/issues.php').then(r=>r.json()),fetch('../api/stats.php').then(r=>r.json())]);
+  issues=i.issues;
+  $('kpis').innerHTML=[['Open',s.open,'primary'],['Resolved',s.resolved,'success'],['Overdue (>7d)',s.overdue,'danger'],['Duplicates merged',s.duplicates_merged,'warning'],['Avg resolution',s.avg_resolution_hours+' h','dark']]
+   .map(k=>`<div class="col"><div class="card kpi p-2 border-${k[2]}"><b class="text-${k[2]}">${k[1]}</b>${k[0]}</div></div>`).join('');
+  charts.forEach(c=>c.destroy());
+  const mk=(id,type,t,data,key,val)=>new Chart($(id),{type,data:{labels:data.map(x=>x[key]),datasets:[{data:data.map(x=>x[val]),backgroundColor:['#0d6efd','#198754','#ffc107','#dc3545','#6f42c1']}]},
+   options:{plugins:{title:{display:true,text:t},legend:{display:type==='doughnut'}}}});
+  charts=[mk('c1','doughnut','By category',s.by_category,'category','n'),mk('c2','bar','By status',s.by_status,'status','n'),mk('c3','bar','Reported per day',s.last_7_days,'d','n')];
+  render();
+ }catch(e){console.error(e)}
+}
+function render(){
+ const f=$('flt').value;
+ const list=issues.filter(i=>f==='all'||(f==='open'?i.status!=='Resolved':i.status===f));
+ $('rows').innerHTML=list.map(i=>{
+  const age=Math.floor((Date.now()-new Date(i.created_at.replace(' ','T')))/86400000);
+  const od=i.status!=='Resolved'&&age>7?' <span class="badge bg-danger">OVERDUE</span>':'';
+  return `<tr><td>#${i.id}</td><td style="max-width:280px">${esc(i.title)}${od}</td>
+   <td><span class="badge bg-${sevCls[i.severity]}">${esc(i.severity)}</span></td><td>${i.priority_score}</td><td>${i.report_count}</td><td>${age}d</td>
+   <td><select id="s${i.id}" class="form-select form-select-sm">${ST.map(x=>`<option ${x===i.status?'selected':''}>${x}</option>`).join('')}</select></td>
+   <td><input id="a${i.id}" class="form-control form-control-sm" value="${esc(i.assigned_to||'')}" placeholder="Worker/dept"></td>
+   <td><button class="btn btn-sm btn-primary" onclick="save(${i.id},this)">Save</button></td></tr>`}).join('')
+  ||'<tr><td colspan="9" class="text-center text-muted">No issues</td></tr>';
+}
+async function save(id,btn){
+ const fd=new FormData();fd.append('id',id);fd.append('status',$('s'+id).value);fd.append('assigned_to',$('a'+id).value);
+ btn.disabled=true;
+ try{
+  const d=await fetch('../api/update_status.php',{method:'POST',body:fd}).then(r=>r.json());
+  if(!d.success)throw new Error(d.error);
+  btn.textContent='Saved ✓';setTimeout(()=>{btn.textContent='Save';btn.disabled=false;refresh()},800);
+ }catch(e){alert(e.message);btn.disabled=false}
+}
+init();
+</script></body></html>
