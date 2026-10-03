@@ -10,4 +10,5 @@ if (!$u || !password_verify($pass, $u['password_hash']))
     respond(['success'=>false,'error'=>'Invalid email or password'], 401);
 $_SESSION['uid'] = $u['id'];
 $_SESSION['name'] = $u['name'];
+$_SESSION['role'] = $u['role'];
 respond(['success'=>true,'name'=>$u['name']]);
