@@ -3,8 +3,10 @@
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CivicTrack Authority</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<style>body{background:#f4f7fb}.kpi b{font-size:1.8rem;display:block}</style></head>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>body{background:#f4f7fb}.kpi b{font-size:1.8rem;display:block}#amap{height:340px;border-radius:6px}</style></head>
 <body>
 <nav class="navbar navbar-dark bg-dark mb-3"><div class="container-fluid">
  <span class="navbar-brand">🏛️ CivicTrack Authority</span>
@@ -15,9 +17,12 @@
 <div class="container" id="loginView" style="max-width:380px">
  <div class="card shadow-sm"><div class="card-body">
   <h5>Authority login</h5><div id="loginErr"></div>
-  <input id="em" class="form-control mb-2" placeholder="Email" value="admin@civic.com">
-  <input id="pw" type="password" class="form-control mb-3" placeholder="Password">
-  <button class="btn btn-primary w-100" onclick="login()">Login</button>
+  <input id="em" class="form-control mb-2" placeholder="Email" value="admin@civic.com" autocomplete="off">
+  <div class="input-group mb-3">
+   <input id="pw" type="password" class="form-control" placeholder="Password" autocomplete="new-password">
+   <button class="btn btn-outline-secondary" type="button" onclick="togglePw()">👁</button>
+  </div>
+  <button id="loginBtn" class="btn btn-primary w-100" onclick="login()">Login</button>
  </div></div>
 </div>
 
@@ -28,6 +33,20 @@
   <div class="col-md-4"><div class="card p-3"><canvas id="c2" height="200"></canvas></div></div>
   <div class="col-md-4"><div class="card p-3"><canvas id="c3" height="200"></canvas></div></div>
  </div>
+ <div class="card mb-3"><div class="card-body">
+  <div class="d-flex justify-content-between flex-wrap mb-2">
+   <h5 class="m-0">Issue map</h5>
+   <small class="text-muted">
+    <span style="color:#6c757d">●</span> Resolved
+    <span style="color:#198754">●</span> Low
+    <span style="color:#ffc107">●</span> Medium
+    <span style="color:#dc3545">●</span> High
+    <span style="color:#212529">●</span> Critical · bigger dot = more merged reports · follows the filters below
+   </small>
+  </div>
+  <div id="amap"></div>
+  <div id="mapMsg" class="text-muted small mt-1"></div>
+ </div></div>
  <div class="card"><div class="card-body">
   <div class="d-flex justify-content-between flex-wrap gap-2 mb-2">
    <h5 class="m-0">Priority queue (highest first)</h5>
@@ -45,7 +64,7 @@
   </div>
   <div class="table-responsive"><table class="table table-sm align-middle">
    <thead><tr><th>ID</th><th>Issue</th><th>Severity</th><th>Score</th><th>Reports</th><th>Age</th><th>Status</th><th>Assign to</th><th>After photo</th><th></th></tr></thead>
-   <tbody id="rows"></tbody></table></div>
+   <tbody id="rows"><tr><td colspan="10" class="text-center text-muted">Loading issues…</td></tr></tbody></table></div>
  </div></div>
 </div>
 
@@ -54,21 +73,62 @@ const $=id=>document.getElementById(id);
 const esc=s=>{const d=document.createElement('div');d.textContent=s??'';return d.innerHTML};
 const ST=['Reported','Verified','Assigned','In Progress','Resolved'];
 const sevCls={Low:'success',Medium:'warning',High:'danger',Critical:'dark'};
-let issues=[],charts=[];
+const sevCol={Low:'#198754',Medium:'#ffc107',High:'#dc3545',Critical:'#212529'};
+let issues=[],charts=[],map=null,layer=null,fitted=false;
+
+function togglePw(){const p=$('pw');p.type=p.type==='password'?'text':'password'}
+function showErr(msg){$('loginErr').innerHTML=`<div class="alert alert-danger py-2">${esc(msg)}</div>`}
 
 async function init(){
- const m=await fetch('../api/me.php').then(r=>r.json());
- if(m.logged_in){$('loginView').classList.add('d-none');$('dash').classList.remove('d-none');$('logoutBtn').classList.remove('d-none');refresh();setInterval(refresh,15000)}
+ try{
+  const m=await fetch('../api/me.php').then(r=>r.json());
+  if(m.logged_in){$('loginView').classList.add('d-none');$('dash').classList.remove('d-none');$('logoutBtn').classList.remove('d-none');refresh();setInterval(refresh,15000)}
+ }catch(e){console.error(e)}
+ ['pw','em'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')login()}));
 }
 async function login(){
- const fd=new FormData();fd.append('email',$('em').value);fd.append('password',$('pw').value);
+ const email=$('em').value.trim(), pass=$('pw').value;
+ if(!pass){showErr('Type the password first (box is empty)');return}
+ const btn=$('loginBtn');btn.disabled=true;
+ const fd=new FormData();fd.append('email',email);fd.append('password',pass);
  try{
-  const d=await fetch('../api/login.php',{method:'POST',body:fd}).then(r=>r.json());
-  if(!d.success)throw new Error(d.error);
+  const res=await fetch('../api/login.php',{method:'POST',body:fd});
+  const txt=await res.text();
+  let d;try{d=JSON.parse(txt)}catch(_){throw new Error('Server sent non-JSON: '+txt.slice(0,150))}
+  if(!d.success)throw new Error((d.error||'Login failed')+' (sent '+email.length+' email chars, '+pass.length+' password chars)');
   location.reload();
- }catch(e){$('loginErr').innerHTML=`<div class="alert alert-danger py-2">${esc(e.message)}</div>`}
+ }catch(e){showErr(e.message);btn.disabled=false}
 }
 async function logout(){await fetch('../api/logout.php');location.reload()}
+
+function initMap(){
+ if(map||typeof L==='undefined')return;
+ try{
+  map=L.map('amap').setView([21.1458,79.0882],12);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
+  layer=L.layerGroup().addTo(map);
+ }catch(e){console.error(e);map=null;$('mapMsg').textContent='Map could not load (check internet).'}
+}
+function drawMap(list){
+ if(typeof L==='undefined'){$('mapMsg').textContent='Map library not loaded (check internet).';return}
+ initMap();
+ if(!map||!layer)return;
+ layer.clearLayers();
+ const pts=[];
+ list.forEach(i=>{
+  const lat=parseFloat(i.latitude),lng=parseFloat(i.longitude);
+  if(isNaN(lat)||isNaN(lng))return;
+  const col=i.status==='Resolved'?'#6c757d':(sevCol[i.severity]||'#0d6efd');
+  const rad=Math.min(18,6+(parseInt(i.report_count)||1)*0.6);
+  L.circleMarker([lat,lng],{radius:rad,color:'#fff',weight:1.5,fillColor:col,fillOpacity:.85})
+   .bindPopup(`<b>#${i.id} ${esc(i.title)}</b><br>${esc(i.category)} · ${esc(i.severity)} (score ${i.priority_score})<br>${i.report_count} reports · ${esc(i.status)}${i.assigned_to?'<br>Assigned: '+esc(i.assigned_to):''}`)
+   .addTo(layer);
+  pts.push([lat,lng]);
+ });
+ $('mapMsg').textContent=pts.length?'':'No issues with a location for this filter.';
+ if(pts.length&&!fitted){map.fitBounds(pts,{padding:[30,30],maxZoom:15});fitted=true}
+ setTimeout(()=>map&&map.invalidateSize(),100);
+}
 
 async function refresh(){
  // don't wipe the table while the admin is typing or choosing a file
@@ -76,7 +136,7 @@ async function refresh(){
  if(a&&a.closest&&a.closest('#rows'))return;
  try{
   const [i,s]=await Promise.all([fetch('../api/issues.php').then(r=>r.json()),fetch('../api/stats.php').then(r=>r.json())]);
-  issues=i.issues;
+  issues=i.issues||[];
   $('kpis').innerHTML=[['Open',s.open,'primary'],['Resolved',s.resolved,'success'],['Overdue (>7d)',s.overdue,'danger'],['Duplicates merged',s.duplicates_merged,'warning'],['Avg resolution',s.avg_resolution_hours+' h','dark']]
    .map(k=>`<div class="col"><div class="card kpi p-2 border-${k[2]}"><b class="text-${k[2]}">${k[1]}</b>${k[0]}</div></div>`).join('');
   charts.forEach(c=>c.destroy());
@@ -84,12 +144,16 @@ async function refresh(){
    options:{plugins:{title:{display:true,text:t},legend:{display:type==='doughnut'}}}});
   charts=[mk('c1','doughnut','By category',s.by_category,'category','n'),mk('c2','bar','By status',s.by_status,'status','n'),mk('c3','bar','Reported per day',s.last_7_days,'d','n')];
   render();
- }catch(e){console.error(e)}
+ }catch(e){
+  console.error(e);
+  $('rows').innerHTML='<tr><td colspan="10" class="text-center text-danger">Could not load issues. Check that Apache and MySQL are running.</td></tr>';
+ }
 }
 function render(){
  const f=$('flt').value;
  const list=issues.filter(i=>(f==='all'||(f==='open'?i.status!=='Resolved':i.status===f))
   &&(!$('fcat').value||i.category===$('fcat').value)&&(!$('fsev').value||i.severity===$('fsev').value));
+ drawMap(list);
  $('rows').innerHTML=list.map(i=>{
   const age=Math.floor((Date.now()-new Date(i.created_at.replace(' ','T')))/86400000);
   const od=i.status!=='Resolved'&&age>7?' <span class="badge bg-danger">OVERDUE</span>':'';
@@ -99,7 +163,7 @@ function render(){
    <td><input id="a${i.id}" class="form-control form-control-sm" value="${esc(i.assigned_to||'')}" placeholder="Worker/dept"></td>
    <td><input id="f${i.id}" type="file" accept="image/*" class="form-control form-control-sm" style="width:150px"></td>
    <td><button class="btn btn-sm btn-primary" onclick="save(${i.id},this)">Save</button></td></tr>`}).join('')
-  ||'<tr><td colspan="10" class="text-center text-muted">No issues</td></tr>';
+  ||'<tr><td colspan="10" class="text-center text-muted">No issues match these filters</td></tr>';
 }
 async function save(id,btn){
  const fd=new FormData();fd.append('id',id);fd.append('status',$('s'+id).value);fd.append('assigned_to',$('a'+id).value);
