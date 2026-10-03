@@ -43,14 +43,18 @@ function severityFromScore($s) {
 
 function saveImage($file) {
     if (!isset($file) || $file['error'] === UPLOAD_ERR_NO_FILE) return null;
-    if ($file['error'] !== UPLOAD_ERR_OK) throw new Exception('Image upload failed');
+    if ($file['error'] !== UPLOAD_ERR_OK) throw new Exception('Image upload failed (code ' . $file['error'] . ')');
     if ($file['size'] > 5 * 1024 * 1024) throw new Exception('Image must be under 5MB');
-    $mime = mime_content_type($file['tmp_name']);
+
+    // getimagesize needs no extra PHP extension (unlike mime_content_type)
+    $info = @getimagesize($file['tmp_name']);
+    $mime = $info['mime'] ?? '';
     $ext = ['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp'][$mime] ?? null;
     if (!$ext) throw new Exception('Only JPG, PNG or WEBP images allowed');
+
     $name = bin2hex(random_bytes(8)) . '.' . $ext;
     $dir = __DIR__ . '/../uploads/';
-    if (!is_dir($dir)) mkdir($dir, 0777, true);
+    if (!is_dir($dir) && !mkdir($dir, 0777, true)) throw new Exception('Upload folder missing');
     if (!move_uploaded_file($file['tmp_name'], $dir . $name)) throw new Exception('Could not save image');
     return 'uploads/' . $name;
 }
