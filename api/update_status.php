@@ -2,7 +2,8 @@
 session_start();
 require 'db.php';
 require 'helpers.php';
-if (empty($_SESSION['uid'])) respond(['success'=>false,'error'=>'Login required'], 401);
+if (empty($_SESSION['uid']) || !in_array($_SESSION['role'] ?? '', ['admin','worker']))
+    respond(['success'=>false,'error'=>'Login required'], 401);
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') respond(['success'=>false,'error'=>'POST only'], 405);
 
 $id = (int)($_POST['id'] ?? 0);
